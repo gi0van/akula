@@ -9,6 +9,7 @@ default-run = "akula"
 
 [dependencies]
 anyhow = "1"
+array-macro = "2"
 arrayref = "0.3"
 arrayvec = "0.7"
 async-recursion = "1"
