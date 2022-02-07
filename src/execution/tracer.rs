@@ -1,6 +1,6 @@
 use crate::models::*;
+use akula_evm::{ExecutionState, OpCode, StatusCode};
 use bytes::Bytes;
-use evmodin::{ExecutionState, OpCode, StatusCode};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, PartialEq)]

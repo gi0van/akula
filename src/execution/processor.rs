@@ -11,8 +11,8 @@ use crate::{
     state::IntraBlockState,
     State,
 };
+use akula_evm::{Revision, StatusCode};
 use anyhow::Context;
-use evmodin::{Revision, StatusCode};
 use std::cmp::min;
 use TransactionAction;
 

@@ -4,9 +4,9 @@ mod ethash;
 
 pub use self::{blockchain::*, ethash::*};
 use crate::{models::*, State};
+use akula_evm::Revision;
 use anyhow::bail;
 use async_trait::async_trait;
-use evmodin::Revision;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug)]

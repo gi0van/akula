@@ -8,6 +8,7 @@ license = "Apache-2.0"
 default-run = "akula"
 
 [dependencies]
+akula-evm = { path = "./src/execution/akula-evm" }
 anyhow = "1"
 arrayref = "0.3"
 arrayvec = "0.7"
@@ -36,7 +37,6 @@ ethnum = { git = "https://github.com/vorot93/ethnum-rs", branch = "staging", fea
     "rlp",
     "scale",
 ] }
-evmodin = { git = "https://github.com/vorot93/evmodin", branch = "akula-staging" }
 futures-core = "0.3"
 futures-util = "0.3"
 hash-db = "0.15"
@@ -124,3 +124,6 @@ name = "consensus-tests"
 inherits = "release"
 codegen-units = 1
 lto = true
+
+[workspace]
+members = ["src/execution/akula-evm"]
