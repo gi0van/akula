@@ -28,7 +28,7 @@ macro_rules! do_call {
 
         if $rev >= Revision::Berlin {
             if ResumeDataVariant::into_access_account_status(
-                yield InterruptDataVariant::AccessAccount(AccessAccount { address: dst }),
+                yield InterruptData::AccessAccount { address: dst },
             )
             .unwrap()
             .status
@@ -83,7 +83,7 @@ macro_rules! do_call {
 
             if (has_value || $rev < Revision::Spurious)
                 && !ResumeDataVariant::into_account_exists_status({
-                    yield InterruptDataVariant::AccountExists(AccountExists { address: dst })
+                    yield InterruptData::AccountExists { address: dst }
                 })
                 .unwrap()
                 .exists
@@ -117,20 +117,19 @@ macro_rules! do_call {
         if $state.message.depth < 1024
             && !(has_value
                 && ResumeDataVariant::into_balance({
-                    yield InterruptDataVariant::GetBalance(GetBalance {
+                    yield InterruptData::GetBalance {
                         address: $state.message.recipient,
-                    })
+                    }
                 })
                 .unwrap()
                 .balance
                     < value)
         {
             let msg_gas = msg.gas;
-            let result = ResumeDataVariant::into_call_output({
-                yield InterruptDataVariant::Call(Call::Call(msg))
-            })
-            .unwrap()
-            .output;
+            let result =
+                ResumeDataVariant::into_call_output({ yield InterruptData::Call(Call::Call(msg)) })
+                    .unwrap()
+                    .output;
             $state.return_data = result.output_data.clone();
             *$state.stack.get_mut(0) = if matches!(result.status_code, StatusCode::Success) {
                 U256::ONE
@@ -196,9 +195,9 @@ macro_rules! do_create {
         if $state.message.depth < 1024
             && !(endowment != 0
                 && ResumeDataVariant::into_balance({
-                    yield InterruptDataVariant::GetBalance(GetBalance {
+                    yield InterruptData::GetBalance {
                         address: $state.message.recipient,
-                    })
+                    }
                 })
                 .unwrap()
                 .balance
@@ -226,7 +225,7 @@ macro_rules! do_create {
             };
             let msg_gas = msg.gas;
             let result = ResumeDataVariant::into_call_output({
-                yield InterruptDataVariant::Call(Call::Create(msg))
+                yield InterruptData::Call(Call::Create(msg))
             })
             .unwrap()
             .output;

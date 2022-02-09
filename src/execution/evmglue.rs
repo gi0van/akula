@@ -8,7 +8,7 @@ use super::{
 use crate::{
     chain::protocol_param::{fee, param},
     execution::evm::{
-        continuation::{interrupt::*, interrupt_data::*, resume_data::*, Interrupt},
+        continuation::{interrupt::*, interrupt_data::*, resume_data::*},
         host::*,
         CallKind, CreateMessage, Message as EvmMessage, Output, Revision, StatusCode,
     },
@@ -364,52 +364,50 @@ where
 
         let output = loop {
             interrupt = match interrupt {
-                InterruptVariant::InstructionStart(_, _) => unreachable!("tracing is disabled"),
-                InterruptVariant::AccountExists(data, i) => {
-                    let address = data.address;
+                Interrupt::InstructionStart { .. } => unreachable!("tracing is disabled"),
+                Interrupt::AccountExists { interrupt, address } => {
                     let exists = if self.block_spec.revision >= Revision::Spurious {
                         !self.state.is_dead(address).await?
                     } else {
                         self.state.exists(address).await?
                     };
-                    i.resume(AccountExistsStatus { exists })
+                    interrupt.resume(AccountExistsStatus { exists })
                 }
-                InterruptVariant::GetBalance(data, i) => {
-                    let balance = self.state.get_balance(data.address).await?;
-                    i.resume(Balance { balance })
+                Interrupt::GetBalance { interrupt, address } => {
+                    let balance = self.state.get_balance(address).await?;
+                    interrupt.resume(Balance { balance })
                 }
-                InterruptVariant::GetCodeSize(data, i) => {
+                Interrupt::GetCodeSize { interrupt, address } => {
                     let code_size = u64::try_from(
                         self.state
-                            .get_code(data.address)
+                            .get_code(address)
                             .await?
                             .map(|c| c.len())
                             .unwrap_or(0),
                     )?
                     .into();
-                    i.resume(CodeSize { code_size })
+                    interrupt.resume(CodeSize { code_size })
                 }
-                InterruptVariant::GetStorage(data, i) => {
-                    let value = self
-                        .state
-                        .get_current_storage(data.address, data.key)
-                        .await?;
-                    i.resume(StorageValue { value })
+                Interrupt::GetStorage {
+                    interrupt,
+                    address,
+                    location,
+                } => {
+                    let value = self.state.get_current_storage(address, location).await?;
+                    interrupt.resume(StorageValue { value })
                 }
-                InterruptVariant::SetStorage(
-                    SetStorage {
-                        address,
-                        key,
-                        value: new_val,
-                    },
-                    i,
-                ) => {
-                    let current_val = self.state.get_current_storage(address, key).await?;
+                Interrupt::SetStorage {
+                    interrupt,
+                    address,
+                    location,
+                    value: new_val,
+                } => {
+                    let current_val = self.state.get_current_storage(address, location).await?;
 
                     let status = if current_val == new_val {
                         StorageStatus::Unchanged
                     } else {
-                        self.state.set_storage(address, key, new_val).await?;
+                        self.state.set_storage(address, location, new_val).await?;
 
                         let eip1283 = self.block_spec.revision >= Revision::Istanbul
                             || self.block_spec.revision == Revision::Constantinople;
@@ -441,7 +439,7 @@ where
 
                             // https://eips.ethereum.org/EIPS/eip-1283
                             let original_val =
-                                self.state.get_original_storage(address, key).await?;
+                                self.state.get_original_storage(address, location).await?;
 
                             // https://eips.ethereum.org/EIPS/eip-3529
                             let sstore_clears_refund =
@@ -485,10 +483,9 @@ where
                         }
                     };
 
-                    i.resume(StorageStatusInfo { status })
+                    interrupt.resume(StorageStatusInfo { status })
                 }
-                InterruptVariant::GetCodeHash(data, i) => {
-                    let address = data.address;
+                Interrupt::GetCodeHash { interrupt, address } => {
                     let hash = h256_to_u256({
                         if self.state.is_dead(address).await? {
                             H256::zero()
@@ -496,16 +493,14 @@ where
                             self.state.get_code_hash(address).await?
                         }
                     });
-                    i.resume(CodeHash { hash })
+                    interrupt.resume(CodeHash { hash })
                 }
-                InterruptVariant::CopyCode(
-                    CopyCode {
-                        address,
-                        offset,
-                        max_size,
-                    },
-                    i,
-                ) => {
+                Interrupt::CopyCode {
+                    interrupt,
+                    address,
+                    offset,
+                    max_size,
+                } => {
                     let mut buffer = vec![0; max_size];
 
                     let code = self.state.get_code(address).await?.unwrap_or_default();
@@ -519,22 +514,29 @@ where
                     buffer.truncate(copied);
                     let code = buffer.into();
 
-                    i.resume(Code { code })
+                    interrupt.resume(Code { code })
                 }
-                InterruptVariant::Selfdestruct(data, i) => {
-                    self.state.record_selfdestruct(data.address);
-                    let balance = self.state.get_balance(data.address).await?;
-                    self.state.add_to_balance(data.beneficiary, balance).await?;
-                    self.state.set_balance(data.address, 0).await?;
+                Interrupt::Selfdestruct {
+                    interrupt,
+                    address,
+                    beneficiary,
+                } => {
+                    self.state.record_selfdestruct(address);
+                    let balance = self.state.get_balance(address).await?;
+                    self.state.add_to_balance(beneficiary, balance).await?;
+                    self.state.set_balance(address, 0).await?;
 
                     if let Some(tracer) = &mut self.tracer {
-                        tracer.capture_self_destruct(data.address, data.beneficiary);
+                        tracer.capture_self_destruct(address, beneficiary);
                     }
 
-                    i.resume(())
+                    interrupt.resume(())
                 }
-                InterruptVariant::Call(data, i) => {
-                    let output = match data {
+                Interrupt::Call {
+                    interrupt,
+                    call_data,
+                } => {
+                    let output = match call_data {
                         Call::Create(message) => {
                             let mut res = self.create(message).await?;
 
@@ -549,9 +551,9 @@ where
                         Call::Call(message) => self.call(message).await?,
                     };
 
-                    i.resume(CallOutput { output })
+                    interrupt.resume(CallOutput { output })
                 }
-                InterruptVariant::GetTxContext(i) => {
+                Interrupt::GetTxContext { interrupt } => {
                     let base_fee_per_gas = self.header.base_fee_per_gas.unwrap_or(U256::ZERO);
                     let tx_gas_price = self.txn.effective_gas_price(base_fee_per_gas);
                     let tx_origin = self.txn.sender;
@@ -575,13 +577,14 @@ where
                         block_base_fee,
                     };
 
-                    i.resume(TxContextData { context })
+                    interrupt.resume(TxContextData { context })
                 }
-                InterruptVariant::GetBlockHash(data, i) => {
-                    let n = data.block_number;
-
+                Interrupt::GetBlockHash {
+                    interrupt,
+                    block_number,
+                } => {
                     let base_number = self.header.number;
-                    let distance = base_number.0 - n;
+                    let distance = base_number.0 - block_number;
                     assert!(distance <= 256);
 
                     let mut hash = self.header.parent_hash;
@@ -597,33 +600,40 @@ where
                     }
 
                     let hash = h256_to_u256(hash);
-                    i.resume(BlockHash { hash })
+                    interrupt.resume(BlockHash { hash })
                 }
-                InterruptVariant::EmitLog(data, i) => {
+                Interrupt::EmitLog {
+                    interrupt,
+                    address,
+                    topics,
+                    data,
+                } => {
                     self.state.add_log(Log {
-                        address: data.address,
-                        topics: data.topics.into_iter().map(u256_to_h256).collect(),
-                        data: data.data,
+                        address,
+                        topics: topics.into_iter().map(u256_to_h256).collect(),
+                        data,
                     });
 
-                    i.resume(())
+                    interrupt.resume(())
                 }
-                InterruptVariant::AccessAccount(data, i) => {
-                    let address = data.address;
-
+                Interrupt::AccessAccount { interrupt, address } => {
                     let status = if self.is_precompiled(address) {
                         AccessStatus::Warm
                     } else {
                         self.state.access_account(address)
                     };
-                    i.resume(AccessAccountStatus { status })
+                    interrupt.resume(AccessAccountStatus { status })
                 }
-                InterruptVariant::AccessStorage(data, i) => {
-                    let status = self.state.access_storage(data.address, data.key);
-                    i.resume(AccessStorageStatus { status })
+                Interrupt::AccessStorage {
+                    interrupt,
+                    address,
+                    location,
+                } => {
+                    let status = self.state.access_storage(address, location);
+                    interrupt.resume(AccessStorageStatus { status })
                 }
-                InterruptVariant::Complete(res, _) => {
-                    let output = match res {
+                Interrupt::Complete { result, .. } => {
+                    let output = match result {
                         Ok(output) => output.into(),
                         Err(status_code) => Output {
                             status_code,
