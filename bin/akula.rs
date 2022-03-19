@@ -1,17 +1,13 @@
 use akula::{
     binutil::AkulaDataDir,
-    downloader::sentry_status_provider::SentryStatusProvider,
     kv::{
         mdbx::*,
         tables::{self, ErasedTable},
         traits::*,
     },
     models::*,
+    p2p::peer::SentryClient,
     rpc::eth::EthApiServerImpl,
-    sentry_connector::{
-        chain_config::ChainConfig, sentry_client_connector::SentryClientConnectorImpl,
-        sentry_client_reactor::SentryClientReactor,
-    },
     stagedsync::{self, stage::*, stages::*, util::*},
     stages::*,
     version_string, StageId,
@@ -33,6 +29,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::pin;
+use tonic::transport::Channel;
 use tracing::*;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -61,7 +58,7 @@ pub struct Opt {
         help = "Sentry GRPC service URL as 'http://host:port'",
         default_value = "http://localhost:8000"
     )]
-    pub sentry_api_addr: akula::sentry_connector::sentry_address::SentryAddress,
+    pub sentry_api_addr: tonic::transport::Uri,
 
     /// Last block where to sync to.
     #[clap(long)]
@@ -75,10 +72,9 @@ pub struct Opt {
     #[clap(long)]
     pub increment: Option<u64>,
 
-    /// Downloader options.
-    #[clap(flatten)]
-    pub downloader_opts: akula::downloader::opts::Opts,
-
+    // /// Downloader options.
+    // #[clap(flatten)]
+    // pub downloader_opts: akula::downloader::opts::Opts,
     /// Sender recovery batch size (blocks)
     #[clap(long, default_value = "500000")]
     pub sender_recovery_batch_size: u64,
@@ -107,9 +103,13 @@ pub struct Opt {
     #[clap(long, default_value = "2000")]
     pub delay_after_sync: u64,
 
-    /// Enable JSONRPC at this address
+    /// Enable JSONRPC at this address.
     #[clap(long)]
     pub rpc_listen_address: Option<SocketAddr>,
+
+    /// P2P Listen port.
+    #[clap(long, default_value = "30303")]
+    pub listen_port: u16,
 }
 
 #[derive(Debug)]
@@ -315,10 +315,10 @@ where
             .unwrap();
 
         let mut starting_index = prev_body.base_tx_id + prev_body.tx_amount as u64;
-        let canonical_header_walker = canonical_header_cur.walk(Some(highest_block + 1));
+        let canonical_header_walker = canonical_header_cur.walk(Some(highest_block + 1u8));
         pin!(canonical_header_walker);
         let erigon_body_walker =
-            erigon_body_cur.walk(Some(TableEncode::encode(highest_block + 1).to_vec()));
+            erigon_body_cur.walk(Some(TableEncode::encode(highest_block + 1u8).to_vec()));
         pin!(erigon_body_walker);
         let mut batch = Vec::with_capacity(BUFFERING_FACTOR);
         let mut converted = Vec::new();
@@ -593,6 +593,7 @@ where
 #[allow(unreachable_code)]
 fn main() -> anyhow::Result<()> {
     let opt: Opt = Opt::parse();
+    fdlimit::raise_fd_limit();
 
     let nocolor = std::env::var("RUST_LOG_STYLE")
         .map(|val| val == "never")
@@ -628,9 +629,8 @@ fn main() -> anyhow::Result<()> {
                 info!("Starting Akula ({})", version_string());
 
                 let chain_config = if let Some(chain) = opt.chain {
-                    let chains_config = akula::sentry_connector::chain_config::ChainsConfig::new()?;
-                    let chain_config = chains_config.get(&chain)?;
-                    Some(chain_config.chain_spec().clone())
+                    let chain_config = ChainConfig::new(&chain)?;
+                    Some(chain_config.chain_spec)
                 } else if let Some(chain_path) = opt.chain_spec_file {
                     Some(ron::de::from_reader(File::open(chain_path)?)?)
                 } else {
@@ -638,7 +638,7 @@ fn main() -> anyhow::Result<()> {
                 };
 
                 // database setup
-                let erigon_db = if let Some(erigon_data_dir) = opt.erigon_data_dir {
+                let _erigon_db = if let Some(erigon_data_dir) = opt.erigon_data_dir {
                     let erigon_chain_data_dir = erigon_data_dir.join("chaindata");
                     let erigon_db = akula::kv::mdbx::MdbxEnvironment::<mdbx::NoWriteMap>::open_ro(
                         mdbx::Environment::new(),
@@ -673,7 +673,7 @@ fn main() -> anyhow::Result<()> {
                     chainspec
                 };
 
-                let chain_config = ChainConfig::new(chainspec);
+                let chain_config = ChainConfig::from(chainspec);
 
                 if let Some(listen_address) = opt.rpc_listen_address {
                     let db = db.clone();
@@ -696,7 +696,104 @@ fn main() -> anyhow::Result<()> {
                     });
                 }
 
-                let sentry_status_provider = SentryStatusProvider::new(chain_config.clone());
+                // {
+                //     let span = span!(Level::INFO, "", " Setting up Ethereum Node ");
+                //     let _g = span.enter();
+                //     let node_key_path = opt.data_dir.node_key_path();
+                //     let secret_key = if node_key_path.is_file() {
+                //         SecretKey::from_slice(&hex::decode(String::from_utf8(std::fs::read(
+                //             &node_key_path,
+                //         )?)?)?)?
+                //     } else {
+                //         let key = SecretKey::new(&mut secp256k1::rand::thread_rng());
+                //         std::fs::write(&node_key_path, hex::encode(key.secret_bytes()))?;
+                //         key
+                //     };
+                //     let listen_addr = format!("0.0.0.0:{}", opt.listen_port);
+                //     info!(
+                //         "Node ID: {}",
+                //         devp2p::util::pk2id(&PublicKey::from_secret_key(SECP256K1, &secret_key))
+                //     );
+
+                //     let mut discovery_tasks = StreamMap::<String, Discovery>::new();
+                //     discovery_tasks.insert(
+                //         "dnsdisc".to_string(),
+                //         Box::pin(
+                //             OptsDnsDisc {
+                //                 address: DNS_DISC_ADDRESS.to_string(),
+                //             }
+                //             .make_task()?,
+                //         ),
+                //     );
+
+                //     // FIXME: Add flags so user can control this.
+                //     let task = OptsDiscV4 {
+                //         discv4_port: 30303u16,
+                //         discv4_bootnodes: chain_config
+                //             .bootnodes()
+                //             .iter()
+                //             .map(|b| Discv4NR::from_str(b).unwrap())
+                //             .collect::<Vec<_>>(),
+                //         discv4_cache: 1024,
+                //         discv4_concurrent_lookups: 8192,
+                //         listen_port: 30303u16,
+                //     }
+                //     .make_task(&secret_key)
+                //     .await?;
+                //     discovery_tasks.insert("discv4".to_string(), Box::pin(task));
+
+                //     let tasks = Arc::new(TaskGroup::new());
+                //     let max_peers = NonZeroUsize::new(256usize).unwrap();
+                //     let protocol_version = EthProtocolVersion::Eth66;
+                //     let capability_server = Arc::new(CapabilityServerImpl::new(
+                //         protocol_version,
+                //         max_peers,
+                //     ));
+                //     let no_new_peers = capability_server.no_new_peers_handle();
+                //     let swarm = Swarm::builder()
+                //         .with_task_group(tasks.clone())
+                //         .with_listen_options(ListenOptions::new(
+                //             discovery_tasks,
+                //             max_peers,
+                //             listen_addr.parse::<SocketAddr>()?,
+                //             None,
+                //             no_new_peers,
+                //         ))
+                //         .with_client_version(format!("sentry/v{}", env!("CARGO_PKG_VERSION")))
+                //         .build(
+                //             btreemap! {
+                //                 CapabilityId { name: capability_name(), version: protocol_version as CapabilityVersion } => 17,
+                //             },
+                //             capability_server.clone(),
+                //             secret_key,
+                //         )
+                //         .await
+                //         .context("Failed to start RLPx node")?;
+
+                //     // FIXME: Add flags for this.
+                //     let sentry_addr = opt.sentry_api_addr.clone();
+
+                //     tasks.spawn(async move {
+                //         let svc = SentryServer::new(SentryService::new(capability_server));
+                //         info!("Sentry gRPC server starting on {}", sentry_addr);
+
+                //         Server::builder().add_service(svc).serve("127.0.0.1:8000".parse().unwrap()).await.unwrap();
+                //     });
+                //     tokio::spawn(async move {
+                //         loop {
+                //             info!(
+                //                 "Peer info: {} active (+{} dialing) / {} max.",
+                //                 swarm.connected_peers(),
+                //                 swarm.dialing(),
+                //                 max_peers,
+                //             );
+                //             tokio::time::sleep(Duration::from_secs(5)).await;
+                //         };
+                //     });
+                // }
+
+                // tokio::time::sleep(Duration::from_secs(5)).await;
+
                 // staged sync setup
                 let mut staged_sync = stagedsync::StagedSync::new();
                 staged_sync.set_min_progress_to_commit_after_stage(if opt.prune {
@@ -710,46 +807,24 @@ fn main() -> anyhow::Result<()> {
                 staged_sync.set_max_block(opt.max_block);
                 staged_sync.set_exit_after_sync(opt.exit_after_sync);
                 staged_sync.set_delay_after_sync(Some(Duration::from_millis(opt.delay_after_sync)));
-                if let Some(erigon_db) = erigon_db.clone() {
-                    staged_sync.push(ConvertHeaders {
-                        db: erigon_db,
-                        max_block: opt.max_block,
-                        exit_after_progress: opt.increment.or({
-                            if opt.prune {
-                                Some(90_000)
-                            } else {
-                                None
-                            }
-                        }),
-                    });
-                } else {
-                    // sentry setup
-                    let mut sentry_reactor = SentryClientReactor::new(
-                        Box::new(SentryClientConnectorImpl::new(opt.sentry_api_addr.clone())),
-                        sentry_status_provider.current_status_stream(),
-                    );
-                    sentry_reactor.start()?;
+                // also add body download stage here
+                let conn =
+                    SentryClient::new(Channel::builder(opt.sentry_api_addr).connect().await?);
+                staged_sync.push(HeaderDownload::new(
+                    conn.clone(),
+                    chain_config.clone(),
+                    db.begin()?,
+                )?);
 
-                    staged_sync.push(HeaderDownload::new(
-                        chain_config,
-                        opt.downloader_opts.headers_mem_limit(),
-                        opt.downloader_opts.headers_batch_size,
-                        sentry_reactor.into_shared(),
-                        sentry_status_provider,
-                    )?);
-                }
                 staged_sync.push(TotalGasIndex);
                 staged_sync.push(BlockHashes {
                     temp_dir: etl_temp_dir.clone(),
                 });
-                if let Some(erigon_db) = erigon_db {
-                    staged_sync.push(ConvertBodies {
-                        db: erigon_db,
-                        commit_after: Duration::from_secs(120),
-                    });
-                } else {
-                    // also add body download stage here
-                }
+                staged_sync.push(BodyDownload::new(
+                    conn.clone(),
+                    chain_config.clone(),
+                    db.begin()?,
+                )?);
                 staged_sync.push(TotalTxIndex);
                 staged_sync.push(SenderRecovery {
                     batch_size: opt.sender_recovery_batch_size.try_into().unwrap(),

@@ -1,16 +1,22 @@
 #![feature(
-    bool_to_option,
-    const_for,
-    const_mut_refs,
-    generator_trait,
+    async_closure,
+    adt_const_params,
+    const_trait_impl,
+    const_convert,
+    const_option,
+    derive_default_enum,
     generators,
+    generator_trait,
     let_else,
-    map_first_last,
-    never_type,
     poll_ready,
     step_trait,
-    type_alias_impl_trait,
-    adt_const_params
+    stmt_expr_attributes,
+    try_blocks,
+    slice_pattern,
+    never_type,
+    core_intrinsics,
+    inline_const,
+    nll
 )]
 #![recursion_limit = "256"]
 #![allow(
@@ -28,15 +34,14 @@ mod bitmapdb;
 pub mod chain;
 pub mod consensus;
 pub mod crypto;
-pub mod downloader;
 pub mod etl;
 pub mod execution;
 pub mod kv;
 pub mod models;
+pub mod p2p;
 pub mod res;
 pub mod rpc;
 pub mod sentry;
-pub mod sentry_connector;
 pub mod stagedsync;
 pub mod stages;
 mod state;

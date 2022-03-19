@@ -30,12 +30,19 @@ use tracing::*;
 pub mod devp2p;
 pub mod eth;
 pub mod grpc;
+pub mod opts;
 pub mod services;
 
 type OutboundSender = Sender<OutboundEvent>;
 type OutboundReceiver = Arc<AsyncMutex<BoxStream<'static, OutboundEvent>>>;
 
 pub const BUFFERING_FACTOR: usize = 5;
+
+/// INITIAL_WINDOW_SIZE upper bound
+pub const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
+
+/// MAX_FRAME_SIZE upper bound
+pub const MAX_FRAME_SIZE: u32 = (1 << 24) - 1;
 
 #[derive(Clone)]
 struct Pipes {
