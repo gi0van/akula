@@ -594,6 +594,8 @@ where
 fn main() -> anyhow::Result<()> {
     let opt: Opt = Opt::parse();
 
+    let exit_after_sync = opt.exit_after_sync;
+
     let nocolor = std::env::var("RUST_LOG_STYLE")
         .map(|val| val == "never")
         .unwrap_or(false);
@@ -779,9 +781,17 @@ fn main() -> anyhow::Result<()> {
                 info!("Running staged sync");
                 staged_sync.run(&db).await?;
 
-                Ok(())
+                Ok::<_, anyhow::Error>(())
             })
         })?
         .join()
-        .unwrap_or_else(|e| panic::resume_unwind(e))
+        .unwrap_or_else(|e| panic::resume_unwind(e))?;
+
+    if exit_after_sync {
+        Ok(())
+    } else {
+        loop {
+            std::thread::park()
+        }
+    }
 }
