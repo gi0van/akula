@@ -39,6 +39,15 @@ where
         ))
     }
 
+    async fn chain_id(&self) -> RpcResult<U64> {
+        Ok(chain::chain_config::read(&self.db.begin()?)?
+            .ok_or_else(|| format_err!("chain specification not found"))?
+            .params
+            .chain_id
+            .0
+            .into())
+    }
+
     async fn call(
         &self,
         call_data: types::MessageCall,
@@ -182,7 +191,7 @@ where
             None,
         )?)
     }
-    async fn get_transaction(&self, hash: H256) -> RpcResult<Option<types::Tx>> {
+    async fn get_transaction_by_hash(&self, hash: H256) -> RpcResult<Option<types::Tx>> {
         let txn = self.db.begin()?;
         if let Some(block_number) = chain::tl::read(&txn, hash)? {
             let block_hash = chain::canonical_hash::read(&txn, block_number)?
@@ -394,12 +403,13 @@ where
             );
 
             let receipts = processor.execute_block_no_post_validation()?;
-            let (transaction_index, transaction) = block_body
-                .transactions
+
+            let (transaction_index, _) = chain::block_body::read_without_senders(&txn, block_hash, block_number)?.ok_or_else(|| format_err!("where's block body"))?.transactions
                 .into_iter()
                 .enumerate()
-                .find(|(_, tx)| tx.message.hash() == hash)
+                .find(|(_, tx)| tx.hash() == hash)
                 .ok_or_else(|| format_err!("transaction {hash} not found in block #{block_number}/{block_hash} despite lookup index"))?;
+            let transaction = &block_body.transactions[transaction_index];
             let receipt = receipts.get(transaction_index).unwrap();
             let gas_used = U64::from(
                 receipt.cumulative_gas_used
@@ -415,7 +425,7 @@ where
                 .map(|(i, log)| types::TransactionLog {
                     log_index: Some(U64::from(i)),
                     transaction_index: Some(U64::from(transaction_index)),
-                    transaction_hash: Some(transaction.message.hash()),
+                    transaction_hash: Some(transaction.hash()),
                     block_hash: Some(block_hash),
                     block_number: Some(U64::from(block_number.0)),
                     address: log.address,

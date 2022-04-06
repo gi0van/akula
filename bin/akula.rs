@@ -7,7 +7,10 @@ use akula::{
         traits::*,
     },
     models::*,
-    rpc::eth::EthApiServerImpl,
+    rpc::{
+        erigon::ErigonApiServerImpl, eth::EthApiServerImpl, net::NetApiServerImpl,
+        otterscan::OtterscanApiServerImpl,
+    },
     sentry_connector::{
         chain_config::ChainConfig, sentry_client_connector::SentryClientConnectorImpl,
         sentry_client_reactor::SentryClientReactor,
@@ -19,9 +22,9 @@ use akula::{
 use anyhow::{bail, format_err, Context};
 use async_trait::async_trait;
 use clap::Parser;
-use ethereum_jsonrpc::EthApiServer;
+use ethereum_jsonrpc::{ErigonApiServer, EthApiServer, NetApiServer, OtterscanApiServer};
 use fastrlp::*;
-use jsonrpsee::http_server::HttpServerBuilder;
+use jsonrpsee::{core::server::rpc_module::Methods, http_server::HttpServerBuilder};
 use rayon::prelude::*;
 use std::{
     fs::File,
@@ -682,15 +685,22 @@ fn main() -> anyhow::Result<()> {
                             .build(listen_address)
                             .await
                             .unwrap();
-                        let _server_handle = server
-                            .start(
-                                EthApiServerImpl {
-                                    db,
-                                    call_gas_limit: 100_000_000,
-                                }
-                                .into_rpc(),
-                            )
+
+                        let mut api = Methods::new();
+                        api.merge(
+                            EthApiServerImpl {
+                                db: db.clone(),
+                                call_gas_limit: 100_000_000,
+                            }
+                            .into_rpc(),
+                        )
+                        .unwrap();
+                        api.merge(NetApiServerImpl.into_rpc()).unwrap();
+                        api.merge(ErigonApiServerImpl { db: db.clone() }.into_rpc())
                             .unwrap();
+                        api.merge(OtterscanApiServerImpl { db }.into_rpc()).unwrap();
+
+                        let _server_handle = server.start(api).unwrap();
 
                         pending::<()>().await
                     });
