@@ -10,7 +10,7 @@ use derive_more::FromStr;
 use educe::Educe;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::IpAddr, str::FromStr, sync::Arc, time::Duration};
 use tracing::info;
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -76,7 +76,11 @@ pub struct OptsDiscV4 {
 }
 
 impl OptsDiscV4 {
-    pub async fn make_task(self, secret_key: &SecretKey) -> anyhow::Result<Discv4> {
+    pub async fn make_task(
+        self,
+        public_address: Option<IpAddr>,
+        secret_key: &SecretKey,
+    ) -> anyhow::Result<Discv4> {
         info!("Starting discv4 at port {}", self.discv4_port);
 
         let bootstrap_nodes = self
@@ -89,8 +93,7 @@ impl OptsDiscV4 {
             format!("0.0.0.0:{}", self.discv4_port).parse().unwrap(),
             *secret_key,
             bootstrap_nodes,
-            None,
-            true,
+            public_address,
             self.listen_port,
         )
         .await?;

@@ -10,7 +10,9 @@ use educe::Educe;
 use ethereum_interfaces::sentry::sentry_server::SentryServer;
 use maplit::btreemap;
 use secp256k1::{PublicKey, SecretKey, SECP256K1};
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    fs::File, io::Write, net::IpAddr, num::NonZeroUsize, path::PathBuf, sync::Arc, time::Duration,
+};
 use task_group::TaskGroup;
 use tokio::time::sleep;
 use tokio_stream::StreamMap;
@@ -59,10 +61,57 @@ pub struct Opts {
     /// Disable DNS discovery
     #[clap(long, takes_value = false)]
     pub no_dns_discovery: bool,
+    /// Public IP address(disables UPNP).
+    #[clap(long)]
+    pub nat: Option<IpAddr>,
+    /// Enable profiling.
+    #[clap(long)]
+    pub pprof: Option<String>,
     #[clap(long)]
     pub peers_file: Option<PathBuf>,
     #[clap(long, takes_value = false)]
     pub tokio_console: bool,
+}
+
+use pprof::protos::Message;
+#[cfg(target_os = "linux")]
+fn enable_pprof<'a>() -> Option<pprof::ProfilerGuard<'a>> {
+    Some(
+        pprof::ProfilerGuardBuilder::default()
+            .frequency(100)
+            .blocklist(&[
+                "libc",
+                "libgcc",
+                "pthread",
+                "vdso",
+                "tokio",
+                "tokio_util",
+                "future_util",
+                "future_core",
+            ])
+            .build()
+            .unwrap(),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enable_pprof<'a>() -> Option<pprof::ProfilerGuard<'a>> {
+    None
+}
+
+fn save_profile<T>(g: pprof::ProfilerGuard<'_>, filename: T) -> anyhow::Result<()>
+where
+    T: AsRef<str>,
+{
+    let report = g.report().build()?;
+    let mut file = File::create(filename.as_ref()).unwrap();
+    let profile = report.pprof().unwrap();
+
+    let mut content = Vec::new();
+    profile.encode(&mut content).unwrap();
+    file.write_all(&content).unwrap();
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -79,6 +128,12 @@ async fn main() -> anyhow::Result<()> {
         )
     } else {
         EnvFilter::from_default_env()
+    };
+
+    let pprof_guard = if opts.pprof.is_some() {
+        self::enable_pprof()
+    } else {
+        None
     };
 
     let bootnodes = if opts.discv4_bootnodes.is_empty() {
@@ -135,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
             discv4_concurrent_lookups: opts.discv4_concurrent_lookups,
             listen_port: opts.listen_port,
         };
-        let task = task_opts.make_task(&secret_key).await?;
+        let task = task_opts.make_task(opts.nat, &secret_key).await?;
         discovery_tasks.insert("discv4".to_string(), Box::pin(task));
     }
 
@@ -194,14 +249,24 @@ async fn main() -> anyhow::Result<()> {
             .unwrap();
     });
 
-    loop {
-        info!(
-            "Peer info: {} active (+{} dialing) / {} max.",
-            swarm.connected_peers(),
-            swarm.dialing(),
-            opts.max_peers
-        );
+    tasks.spawn(async move {
+        loop {
+            info!(
+                "Peer info: {} active (+{} dialing) / {} max.",
+                swarm.connected_peers(),
+                swarm.dialing(),
+                opts.max_peers
+            );
 
-        sleep(Duration::from_secs(5)).await;
+            sleep(Duration::from_secs(5)).await;
+        }
+    });
+
+    tokio::signal::ctrl_c().await?;
+    drop(tasks);
+    if let Some(guard) = pprof_guard {
+        self::save_profile(guard, &opts.pprof.unwrap())?;
     }
+
+    Ok(())
 }

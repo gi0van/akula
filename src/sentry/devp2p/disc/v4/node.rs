@@ -230,7 +230,6 @@ impl Node {
         secret_key: SecretKey,
         bootstrap_nodes: Vec<NodeRecord>,
         public_address: Option<IpAddr>,
-        enable_upnp: bool,
         tcp_port: u16,
     ) -> anyhow::Result<Arc<Self>> {
         let node_endpoint = Arc::new(RwLock::new(Endpoint {
@@ -240,6 +239,8 @@ impl Node {
         }));
 
         let task_group = Arc::new(TaskGroup::new());
+
+        let enable_upnp = public_address.is_none();
 
         if enable_upnp {
             task_group.spawn_with_name("discv4 - UPnP", {
@@ -277,7 +278,8 @@ impl Node {
 
         let udp = Arc::new(UdpSocket::bind(&addr).await?);
 
-        let (egress_requests_tx, mut egress_requests) = channel(1);
+        let (egress_requests_tx, mut egress_requests) =
+            channel::<(SocketAddr, NodeId, EgressMessage)>(1);
 
         let mut table = Table::new(id);
         for node in bootstrap_nodes {
@@ -370,7 +372,9 @@ impl Node {
                             }
                         }
 
-                        if !do_send {
+                        if !do_send || addr.is_ipv6()
+                        /* discv4 doesn't support ipv6. */
+                        {
                             return;
                         }
 

@@ -1,6 +1,5 @@
 use akula::{
-    binutil::AkulaDataDir,
-    kv::{
+    binutil::AkulaDataDir, kv::{
         mdbx::*,
         tables::{self, ErasedTable},
         traits::*,
