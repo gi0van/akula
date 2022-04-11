@@ -143,8 +143,6 @@ hashbrown = { version = "0.12.0", features = [
     "nightly",
     "ahash-compile-time-rng",
 ] }
-crossbeam = { version = "0.8.1", features = ["nightly"] }
-crossbeam-skiplist = { git = "https://github.com/crossbeam-rs/crossbeam" }
 
 [build-dependencies]
 anyhow = "1"

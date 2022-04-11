@@ -25,7 +25,7 @@ pub struct DnsDiscConfig {
 #[derive(Debug, FromStr)]
 pub struct NR(pub NodeRecord);
 
-#[derive(Debug, FromStr)]
+#[derive(Debug, FromStr, Clone)]
 pub struct Discv4NR(pub crate::sentry::devp2p::disc::v4::NodeRecord);
 
 pub struct OptsDnsDisc {

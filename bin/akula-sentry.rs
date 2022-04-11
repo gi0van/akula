@@ -1,5 +1,8 @@
 #![allow(dead_code, clippy::upper_case_acronyms)]
-use akula::sentry::{devp2p::*, eth::*, opts::*, services::*, CapabilityServerImpl};
+use akula::{
+    models::ChainConfig,
+    sentry::{devp2p::*, eth::*, opts::*, services::*, CapabilityServerImpl},
+};
 use anyhow::Context;
 use cidr::IpCidr;
 use clap::Parser;
@@ -47,6 +50,9 @@ pub struct Opts {
     pub static_peers_interval: u64,
     #[clap(long, default_value = "50")]
     pub max_peers: NonZeroUsize,
+    /// Chain
+    #[clap(long, default_value = "mainnet")]
+    pub chain: String,
     /// Disable DNS and UDP discovery, only use static peers.
     #[clap(long, takes_value = false)]
     pub no_discovery: bool,
@@ -74,6 +80,17 @@ async fn main() -> anyhow::Result<()> {
     } else {
         EnvFilter::from_default_env()
     };
+
+    let bootnodes = if !opts.discv4_bootnodes.is_empty() {
+        opts.discv4_bootnodes.clone()
+    } else {
+        ChainConfig::new(&opts.chain)?
+            .bootnodes()
+            .iter()
+            .map(|bootnode| Discv4NR(bootnode.parse().unwrap()))
+            .collect::<Vec<_>>()
+    };
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .with(filter)
@@ -117,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
 
         let task_opts = OptsDiscV4 {
             discv4_port: opts.discv4_port,
-            discv4_bootnodes: opts.discv4_bootnodes,
+            discv4_bootnodes: bootnodes,
             discv4_cache: opts.discv4_cache,
             discv4_concurrent_lookups: opts.discv4_concurrent_lookups,
             listen_port: opts.listen_port,
@@ -144,7 +161,6 @@ async fn main() -> anyhow::Result<()> {
     let protocol_version = EthProtocolVersion::Eth66;
 
     let capability_server = Arc::new(CapabilityServerImpl::new(protocol_version, opts.max_peers));
-
     let no_new_peers = capability_server.no_new_peers_handle();
 
     let swarm = Swarm::builder()
