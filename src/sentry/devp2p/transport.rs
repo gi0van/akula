@@ -61,10 +61,10 @@ impl TcpServer for TokioCidrListener {
                         "Ignoring connection request: {} is not in range {}",
                         remote_addr, cidr
                     );
-                } else {
-                    return Ok(node);
                 }
+                continue;
             }
+            return Ok(node);
         }
     }
 }

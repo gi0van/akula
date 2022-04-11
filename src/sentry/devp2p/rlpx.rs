@@ -33,7 +33,6 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::{
         mpsc::{channel, unbounded_channel},
-        oneshot::{channel as oneshot, Sender as OneshotSender},
         Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore,
     },
     time::sleep,
@@ -43,9 +42,9 @@ use tracing::*;
 use uuid::Uuid;
 
 const GRACE_PERIOD_SECS: u64 = 2;
-const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
-const PING_TIMEOUT: Duration = Duration::from_secs(15);
-const PING_INTERVAL: Duration = Duration::from_secs(60);
+const HANDSHAKE_TIMEOUT_SECS: u64 = 30;
+const PING_TIMEOUT: Duration = Duration::from_secs(60);
+const PING_INTERVAL: Duration = Duration::from_secs(10);
 const DISCOVERY_TIMEOUT_SECS: u64 = 90;
 const DISCOVERY_CONNECT_TIMEOUT_SECS: u64 = 5;
 
@@ -181,22 +180,14 @@ where
 
     // This will handle incoming packets from peer.
     tasks.spawn_with_name(format!("peer {} ingress router", remote_id), {
-        let peer_disconnect_tx = peer_disconnect_tx.clone();
+        let peer_disconnect_tx = peer_disconnect_tx;
         let capability_server = capability_server.clone();
-        let pinged = pinged.clone();
         async move {
             let disconnect_signal = {
                 async move {
-                    while let Some(message) = stream.next().await {
+                    while let Some(Ok(message)) = stream.next().await {
                         match message {
-                            Err(e) => {
-                                debug!("Peer incoming error: {}", e);
-                                break;
-                            }
-                            Ok(PeerMessage::Subprotocol(SubprotocolMessage {
-                                cap_name,
-                                message,
-                            })) => {
+                            PeerMessage::Subprotocol(SubprotocolMessage { cap_name, message }) => {
                                 // Actually handle the message
                                 capability_server
                                     .on_peer_event(
@@ -208,17 +199,17 @@ where
                                     )
                                     .await
                             }
-                            Ok(PeerMessage::Disconnect(reason)) => {
+                            PeerMessage::Disconnect(reason) => {
                                 // Peer has requested disconnection.
                                 return DisconnectSignal {
                                     initiator: DisconnectInitiator::Remote,
                                     reason,
                                 };
                             }
-                            Ok(PeerMessage::Ping) => {
+                            PeerMessage::Ping => {
                                 let _ = pongs_tx.send(()).await;
                             }
-                            Ok(PeerMessage::Pong) => {
+                            PeerMessage::Pong => {
                                 // Pong received, peer is off the hook
                                 pinged.store(false, Ordering::SeqCst);
                             }
@@ -248,7 +239,7 @@ where
                 let mut disconnecting = None;
 
                 // Egress message and trigger to execute _after_ it is sent
-                let mut egress = Option::<(PeerMessage, Option<OneshotSender<()>>)>::None;
+                let mut egress = Option::<PeerMessage>::None;
                 tokio::select! {
                     // Handle event from capability server.
                     msg = &mut event_fut => {
@@ -258,14 +249,14 @@ where
                                 capability_name, message
                             } => {
                                 event_fut = capability_server.next(remote_id);
-                                egress = Some((PeerMessage::Subprotocol(SubprotocolMessage {
+                                egress = Some(PeerMessage::Subprotocol(SubprotocolMessage {
                                     cap_name: capability_name, message
-                                }), None));
+                                }));
                             }
                             OutboundEvent::Disconnect {
                                 reason
                             } => {
-                                egress = Some((PeerMessage::Disconnect(reason), None));
+                                egress = Some(PeerMessage::Disconnect(reason));
                                 disconnecting = Some(DisconnectSignal {
                                     initiator: DisconnectInitiator::Local, reason
                                 });
@@ -273,23 +264,24 @@ where
                         };
                     },
                     // We ping the peer.
-                    Some(tx) = pings.recv() => {
-                        egress = Some((PeerMessage::Ping, Some(tx)));
+                    Some(_) = pings.recv() => {
+                        egress = Some(PeerMessage::Ping);
                     }
                     // Peer has pinged us.
                     Some(_) = pongs.recv() => {
-                        egress = Some((PeerMessage::Pong, None));
+                        egress = Some(PeerMessage::Pong);
                     }
                     // Ping timeout or signal from ingress router.
                     Some(DisconnectSignal { initiator, reason }) = peer_disconnect_rx.recv() => {
+                        info!("{:?} {:?}", initiator, reason);
                         if let DisconnectInitiator::Local = initiator {
-                            egress = Some((PeerMessage::Disconnect(reason), None));
+                            egress = Some(PeerMessage::Disconnect(reason));
                         }
                         disconnecting = Some(DisconnectSignal { initiator, reason })
                     }
                 };
 
-                if let Some((message, trigger)) = egress {
+                if let Some(message) = egress {
                     trace!("Sending message: {:?}", message);
 
                     // Send egress message, force disconnect on error.
@@ -299,11 +291,7 @@ where
                             initiator: DisconnectInitiator::LocalForceful,
                             reason: DisconnectReason::TcpSubsystemError,
                         });
-                    } else if let Some(trigger) = trigger {
-                        // Reason for signal in trigger:
-                        // We don't want to timeout peer if our TCP socket is too slow
-                        let _ = trigger.send(());
-                    }
+                    };
                 }
 
                 if let Some(DisconnectSignal { initiator, reason }) = disconnecting {
@@ -342,27 +330,8 @@ where
     // This will ping the peer and disconnect if they don't respond.
     tasks.spawn_with_name(format!("peer {} pinger", remote_id), async move {
         loop {
-            pinged.store(true, Ordering::SeqCst);
-
-            let (cb_tx, cb_rx) = oneshot();
-
             // Pipes went down, pinger must exit
-            if pings_tx.send(cb_tx).await.is_err() || cb_rx.await.is_err() {
-                return;
-            }
-
-            sleep(PING_TIMEOUT).await;
-
-            // Timeout has passed, let's check for that pong
-            if pinged.load(Ordering::SeqCst) {
-                // No pong? Disconnect.
-                let _ = peer_disconnect_tx.send(DisconnectSignal {
-                    initiator: DisconnectInitiator::Local,
-                    reason: DisconnectReason::PingTimeout,
-                });
-
-                return;
-            }
+            let _ = pings_tx.send(()).await;
 
             sleep(PING_INTERVAL).await;
         }
@@ -690,7 +659,7 @@ impl<C: CapabilityServer> Swarm<C> {
                                                 {
                                                     let time_since_ban: Duration =
                                                         now - banned_timestamp;
-                                                    if time_since_ban <= Duration::from_secs(120) {
+                                                    if time_since_ban <= Duration::from_secs(15) {
                                                         let secs_since_ban = time_since_ban.as_secs();
                                                         debug!(
                                                             "Skipping failed peer ({id}, failed {secs_since_ban}s ago)",

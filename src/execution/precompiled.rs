@@ -16,6 +16,7 @@ use std::{
     io::{repeat, Read},
 };
 use substrate_bn::*;
+use unroll::unroll_for_loops;
 
 pub type GasFunction = fn(Bytes, Revision) -> Option<u64>;
 pub type RunFunction = fn(Bytes) -> Option<Bytes>;
@@ -334,6 +335,8 @@ fn snarkv_gas(input: Bytes, rev: Revision) -> Option<u64> {
         }
     })
 }
+
+#[unroll_for_loops]
 fn snarkv_run(input: Bytes) -> Option<Bytes> {
     if input.len() % usize::from(SNARKV_STRIDE) != 0 {
         return None;
@@ -386,6 +389,7 @@ fn blake2_f_gas(input: Bytes, _: Revision) -> Option<u64> {
     Some(u32::from_be_bytes(*array_ref!(input, 0, 4)).into())
 }
 
+#[unroll_for_loops]
 fn blake2_f_run(input: Bytes) -> Option<Bytes> {
     const BLAKE2_F_ARG_LEN: usize = 213;
 

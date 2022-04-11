@@ -2,10 +2,7 @@ use super::{message::*, util::*, NodeId, NodeRecord};
 use array_init::array_init;
 use arrayvec::ArrayVec;
 use primitive_types::H256;
-use std::{
-    collections::{BTreeMap, VecDeque},
-    convert::TryFrom,
-};
+use std::collections::{BTreeMap, VecDeque};
 use tracing::*;
 use unroll::unroll_for_loops;
 

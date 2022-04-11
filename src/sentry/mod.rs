@@ -1,13 +1,12 @@
 #![allow(dead_code, clippy::upper_case_acronyms)]
 
 use self::eth::*;
-use async_stream::stream;
+use async_channel::{Receiver, Sender};
 use async_trait::async_trait;
 use devp2p::*;
 use educe::Educe;
 use ethereum_interfaces::sentry::{self, InboundMessage, PeersReply};
 use fastrlp::Decodable;
-use futures_core::stream::BoxStream;
 use num_traits::{FromPrimitive, ToPrimitive};
 use parking_lot::RwLock;
 use std::{
@@ -19,11 +18,7 @@ use std::{
         Arc,
     },
 };
-use tokio::sync::{
-    broadcast::{channel as broadcast_channel, Sender as BroadcastSender},
-    mpsc::{channel, Sender},
-    Mutex as AsyncMutex,
-};
+use tokio::sync::broadcast::{channel as broadcast_channel, Sender as BroadcastSender};
 use tokio_stream::StreamExt;
 use tracing::*;
 
@@ -34,9 +29,9 @@ pub mod opts;
 pub mod services;
 
 type OutboundSender = Sender<OutboundEvent>;
-type OutboundReceiver = Arc<AsyncMutex<BoxStream<'static, OutboundEvent>>>;
+type OutboundReceiver = Receiver<OutboundEvent>;
 
-pub const BUFFERING_FACTOR: usize = 5;
+pub const BUFFERING_FACTOR: usize = 16;
 
 /// INITIAL_WINDOW_SIZE upper bound
 pub const MAX_INITIAL_WINDOW_SIZE: u32 = (1 << 31) - 1;
@@ -258,7 +253,6 @@ impl CapabilityServerImpl {
                             .is_err()
                         {
                             warn!("no connected sentry, dropping status");
-                            *self.status_message.write() = None;
                         }
                     }
                     _ => {}
@@ -303,22 +297,12 @@ impl CapabilityServer for CapabilityServerImpl {
             }]
         };
 
-        let (sender, mut receiver) = channel(1);
-        self.setup_peer(
-            peer,
-            Pipes {
-                sender,
-                receiver: Arc::new(AsyncMutex::new(Box::pin(stream! {
-                    for event in first_events {
-                        yield event;
-                    }
+        let (sender, receiver) = async_channel::bounded(128);
+        for event in first_events {
+            sender.try_send(event).expect("should not fail");
+        }
 
-                    while let Some(event) = receiver.recv().await {
-                        yield event;
-                    }
-                }))),
-            },
-        );
+        self.setup_peer(peer, Pipes { sender, receiver });
     }
 
     #[instrument(skip_all, level = "debug", fields(peer=&*peer.to_string(), event=&*event.to_string()))]
@@ -339,8 +323,6 @@ impl CapabilityServer for CapabilityServerImpl {
     async fn next(&self, peer: PeerId) -> OutboundEvent {
         self.receiver(peer)
             .unwrap()
-            .lock()
-            .await
             .next()
             .await
             .unwrap_or(OutboundEvent::Disconnect {
