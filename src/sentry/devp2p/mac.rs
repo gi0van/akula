@@ -5,6 +5,7 @@ use digest::KeyInit;
 use ethereum_types::{H128, H256};
 use generic_array::{typenum::U16, GenericArray};
 use sha3::{Digest, Keccak256};
+use unroll::unroll_for_loops;
 
 pub type HeaderBytes = GenericArray<u8, U16>;
 
@@ -26,6 +27,7 @@ impl MAC {
         self.hasher.update(data)
     }
 
+    #[unroll_for_loops]
     pub fn update_header(&mut self, data: &HeaderBytes) {
         let aes = Aes256Enc::new_from_slice(self.secret.as_ref()).unwrap();
         let mut encrypted = self.digest().to_fixed_bytes();
@@ -37,6 +39,7 @@ impl MAC {
         self.hasher.update(encrypted);
     }
 
+    #[unroll_for_loops]
     pub fn update_body(&mut self, data: &[u8]) {
         self.hasher.update(data);
         let prev = self.digest();

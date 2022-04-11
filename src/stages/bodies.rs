@@ -28,7 +28,7 @@ pub struct BodyDownload {
     /// Peer is a interface for interacting with p2p.
     peer: Arc<Peer>,
     /// Requests is a mapping of (ommers_hash, transactions_root) to hash with it's header.
-    requests: LinkedHashMap<(H256, H256), (H256, BlockHeader)>,
+    requests: LinkedHashMap<(H256, H256), (H256, BlockNumber)>,
 }
 
 #[async_trait]
@@ -141,16 +141,16 @@ impl BodyDownload {
                 future::Either::Left((Some(msg), _)) => match msg.msg {
                     Message::BlockBodies(msg) => {
                         for body in msg.bodies {
-                            if let Some((hash, header)) = self
+                            if let Some((hash, number)) = self
                                 .requests
                                 .remove(&(body.ommers_hash(), body.transactions_root()))
                             {
-                                let _v = bodies.insert(header.number, (hash, body));
+                                let _v = bodies.insert(number, (hash, body));
                                 debug_assert!(_v.is_none());
                             }
                         }
                     }
-                    _ => continue,
+                    other => debug!("Other: {:?}", other),
                 },
                 _ => {
                     self.requests
@@ -253,7 +253,10 @@ impl BodyDownload {
             .map_while(|(n, h)| {
                 (n <= target).then(|| {
                     let header = txn.get(tables::Header, (n, h)).unwrap().unwrap();
-                    ((header.ommers_hash, header.transactions_root), (h, header))
+                    (
+                        (header.ommers_hash, header.transactions_root),
+                        (h, header.number),
+                    )
                 })
             })
             .filter(|&((ommers_hash, transactions_root), _)| {

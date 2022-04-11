@@ -10,9 +10,11 @@ use bytes::{BufMut, Bytes, BytesMut};
 use ethereum_types::H256;
 use fastrlp::{Encodable, RlpEncodable, EMPTY_STRING_CODE};
 use std::{boxed::Box, cmp};
+use unroll::unroll_for_loops;
 
 const RLP_EMPTY_STRING_CODE: u8 = 0x80;
 
+#[unroll_for_loops]
 fn encode_path(nibbles: &[u8], terminating: bool) -> Vec<u8> {
     let mut res = vec![0u8; nibbles.len() / 2 + 1];
     let odd = nibbles.len() % 2 != 0;
@@ -26,8 +28,9 @@ fn encode_path(nibbles: &[u8], terminating: bool) -> Vec<u8> {
         i = 1;
     }
 
-    for byte in res.iter_mut().skip(1) {
-        *byte = (nibbles[i] << 4) + nibbles[i + 1];
+    #[allow(clippy::needless_range_loop)]
+    for j in 1..res.len() {
+        res[j] = (nibbles[i] << 4) + nibbles[i + 1];
         i += 2;
     }
 
@@ -365,6 +368,7 @@ pub(crate) fn pack_nibbles(nibbles: &[u8]) -> Vec<u8> {
     out
 }
 
+#[unroll_for_loops]
 pub fn unpack_nibbles(packed: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; packed.len() * 2];
     let mut i = 0;

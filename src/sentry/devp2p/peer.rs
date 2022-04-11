@@ -16,6 +16,7 @@ use std::{
 };
 use tokio_stream::{Stream, StreamExt};
 use tracing::*;
+use unroll::unroll_for_loops;
 
 const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
 
@@ -155,6 +156,7 @@ where
 
     /// Create a new peer stream
     #[instrument(skip_all, fields(id=&*transport.remote_id().to_string()))]
+    #[unroll_for_loops]
     pub async fn new(
         mut transport: ECIESStream<Io>,
         secret_key: SecretKey,
@@ -228,14 +230,15 @@ where
         debug!("hello message: {:?}", val);
         let mut shared_capabilities: Vec<CapabilityInfo> = Vec::new();
 
-        for cap_info in nonhello_capabilities {
-            let cap_match = val
-                .capabilities
-                .iter()
-                .any(|v| v.name == cap_info.name && v.version == cap_info.version);
-
-            if cap_match {
-                shared_capabilities.push(cap_info);
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..nonhello_capabilities.len() {
+            for j in 0..val.capabilities.len() {
+                if nonhello_capabilities[i].name == val.capabilities[j].name
+                    && nonhello_capabilities[i].version == val.capabilities[j].version
+                {
+                    shared_capabilities.push(nonhello_capabilities[i]);
+                    break;
+                }
             }
         }
 
@@ -417,6 +420,7 @@ where
         Pin::new(&mut self.get_mut().stream).poll_ready(cx)
     }
 
+    #[unroll_for_loops]
     fn start_send(self: Pin<&mut Self>, message: PeerMessage) -> Result<(), Self::Error> {
         let this = self.get_mut();
 

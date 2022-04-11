@@ -144,6 +144,7 @@ hashbrown = { version = "0.12.0", features = [
     "ahash-compile-time-rng",
 ] }
 pprof = { version = "0.7", features = ["flamegraph", "prost-codec"] }
+unroll = "0.1.5"
 
 [build-dependencies]
 anyhow = "1"

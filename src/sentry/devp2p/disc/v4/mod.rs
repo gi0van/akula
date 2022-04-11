@@ -14,6 +14,7 @@ use std::{pin::Pin, sync::Arc};
 use task_group::TaskGroup;
 use tokio::sync::mpsc::{channel, Receiver};
 use tokio_stream::Stream;
+use unroll::unroll_for_loops;
 
 pub type NodeId = H512;
 pub use self::node::{Node, NodeRecord};
@@ -51,6 +52,7 @@ pub struct Discv4 {
 
 impl Discv4 {
     #[must_use]
+    #[unroll_for_loops]
     fn new(node: Arc<Node>, concurrent_lookups: usize, cache: usize) -> Self {
         let tasks = TaskGroup::default();
 

@@ -7,6 +7,7 @@ use std::{
     convert::TryFrom,
 };
 use tracing::*;
+use unroll::unroll_for_loops;
 
 pub const BUCKET_SIZE: usize = 16;
 pub const REPLACEMENTS_SIZE: usize = 16;
@@ -27,6 +28,7 @@ pub struct KBucket {
 }
 
 impl KBucket {
+    #[unroll_for_loops]
     pub fn find_peer_pos(&self, peer: NodeId) -> Option<usize> {
         for i in 0..self.bucket.len() {
             if self.bucket[i].id == peer {
@@ -58,6 +60,7 @@ impl Table {
         }
     }
 
+    #[unroll_for_loops]
     fn logdistance(&self, peer: NodeId) -> Option<usize> {
         let remote_hash = keccak256(peer);
         for i in (0..ADDRESS_BYTES_SIZE).rev() {
@@ -83,29 +86,27 @@ impl Table {
         None
     }
 
+    #[unroll_for_loops]
     pub fn get(&self, peer: NodeId) -> Option<Endpoint> {
         self.bucket(peer).and_then(|bucket| {
-            bucket
-                .bucket
-                .iter()
-                .find(|entry| entry.id == peer)
-                .copied()
-                .map(From::from)
+            for i in 0..bucket.bucket.len() {
+                if bucket.bucket[i].id == peer {
+                    return Some(bucket.bucket[i].into());
+                }
+            }
+            None
         })
     }
 
+    #[unroll_for_loops]
     pub fn filled_buckets(&self) -> Vec<u8> {
-        self.kbuckets
-            .iter()
-            .enumerate()
-            .filter_map(|(i, kbucket)| {
-                if kbucket.bucket.len() >= BUCKET_SIZE {
-                    Some(u8::try_from(i).expect("there are only 255 kbuckets"))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut filled_buckets = Vec::new();
+        for i in 0..ADDRESS_BITS {
+            if self.kbuckets[i].bucket.len() == BUCKET_SIZE {
+                filled_buckets.push(i as u8);
+            }
+        }
+        filled_buckets
     }
 
     pub fn oldest(&self, bucket_no: u8) -> Option<NodeRecord> {
@@ -166,6 +167,7 @@ impl Table {
 
     /// Remove node from the bucket
     #[instrument(skip_all, fields(node = &*node.to_string()))]
+    #[unroll_for_loops]
     pub fn remove(&mut self, node: NodeId) {
         if let Some(bucket) = self.bucket_mut(node) {
             if bucket.replacements.is_empty() {
@@ -205,12 +207,18 @@ impl Table {
         })
     }
 
+    #[unroll_for_loops]
     pub fn nearest_node_entries(&self, target: NodeId) -> BTreeMap<H256, NodeRecord> {
-        self.kbuckets
-            .iter()
-            .flat_map(|bucket| &bucket.bucket)
-            .map(|n| (distance(n.id, target), *n))
-            .collect()
+        let mut map = BTreeMap::new();
+        for i in 0..ADDRESS_BITS {
+            for j in 0..self.kbuckets[i].bucket.len() {
+                map.insert(
+                    distance(self.kbuckets[i].bucket[j].id, target),
+                    self.kbuckets[i].bucket[j],
+                );
+            }
+        }
+        map
     }
 
     pub fn len(&self) -> usize {

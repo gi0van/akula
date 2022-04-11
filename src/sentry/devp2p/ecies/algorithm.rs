@@ -23,6 +23,7 @@ use secp256k1::{
 use sha2::Sha256;
 use sha3::Keccak256;
 use std::convert::TryFrom;
+use unroll::unroll_for_loops;
 
 const PROTOCOL_VERSION: usize = 4;
 
@@ -30,13 +31,13 @@ fn ecdh_x(public_key: &PublicKey, secret_key: &SecretKey) -> H256 {
     H256::from_slice(&secp256k1::ecdh::shared_secret_point(public_key, secret_key)[..32])
 }
 
+#[unroll_for_loops]
 fn kdf(secret: H256, s1: &[u8], dest: &mut [u8]) {
     // SEC/ISO/Shoup specify counter size SHOULD be equivalent
     // to size of hash output, however, it also notes that
     // the 4 bytes is okay. NIST specifies 4 bytes.
     let mut ctr = 1_u32;
-    let mut written = 0_usize;
-    while written < dest.len() {
+    for i in (0..dest.len()).step_by(32) {
         let mut hasher = Sha256::default();
         let ctrs = [
             (ctr >> 24) as u8,
@@ -48,8 +49,7 @@ fn kdf(secret: H256, s1: &[u8], dest: &mut [u8]) {
         hasher.update(secret.as_bytes());
         hasher.update(s1);
         let d = hasher.finalize();
-        dest[written..(written + 32)].copy_from_slice(&d);
-        written += 32;
+        dest[i..i + 32].copy_from_slice(&d[..]);
         ctr += 1;
     }
 }
@@ -397,6 +397,7 @@ impl ECIES {
         Ok(())
     }
 
+    #[unroll_for_loops]
     fn setup_frame(&mut self, incoming: bool) {
         let mut hasher = Keccak256::new();
         for el in &if incoming {
