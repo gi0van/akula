@@ -81,14 +81,10 @@ async fn main() -> anyhow::Result<()> {
         EnvFilter::from_default_env()
     };
 
-    let bootnodes = if !opts.discv4_bootnodes.is_empty() {
-        opts.discv4_bootnodes.clone()
+    let bootnodes = if opts.discv4_bootnodes.is_empty() {
+        ChainConfig::new(&opts.chain)?.bootnodes()
     } else {
-        ChainConfig::new(&opts.chain)?
-            .bootnodes()
-            .iter()
-            .map(|bootnode| Discv4NR(bootnode.parse().unwrap()))
-            .collect::<Vec<_>>()
+        opts.discv4_bootnodes.clone()
     };
 
     tracing_subscriber::registry()

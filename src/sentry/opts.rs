@@ -9,7 +9,8 @@ use anyhow::format_err;
 use derive_more::FromStr;
 use educe::Educe;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tracing::info;
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -25,8 +26,27 @@ pub struct DnsDiscConfig {
 #[derive(Debug, FromStr)]
 pub struct NR(pub NodeRecord);
 
-#[derive(Debug, FromStr, Clone)]
+#[derive(Clone, Debug, FromStr, PartialEq)]
 pub struct Discv4NR(pub crate::sentry::devp2p::disc::v4::NodeRecord);
+
+impl<'de> Deserialize<'de> for Discv4NR {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for Discv4NR {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
 
 pub struct OptsDnsDisc {
     pub address: String,

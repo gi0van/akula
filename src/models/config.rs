@@ -2,6 +2,7 @@ use crate::{
     genesis::GenesisState,
     models::{BlockNumber, ChainSpec, NetworkId, H256},
     res::chainspec,
+    sentry::opts::Discv4NR,
 };
 use anyhow::anyhow;
 
@@ -52,7 +53,7 @@ impl ChainConfig {
             .collect::<Vec<_>>()
     }
     #[inline(always)]
-    pub fn bootnodes(&self) -> Vec<String> {
+    pub fn bootnodes(&self) -> Vec<Discv4NR> {
         self.chain_spec.p2p.bootnodes.clone()
     }
 }

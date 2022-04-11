@@ -17,6 +17,7 @@ use sha3::{Digest, Keccak256};
 use std::{
     collections::{btree_map, hash_map, BTreeMap, HashMap},
     convert::TryFrom,
+    fmt::Display,
     net::{IpAddr, SocketAddr},
     str::FromStr,
     sync::Arc,
@@ -62,12 +63,22 @@ fn find_node_expiry() -> u64 {
 
 pub const ALPHA: usize = 3;
 
-#[derive(Clone, Copy, Debug, RlpEncodable, RlpDecodable)]
+#[derive(Clone, Copy, Debug, PartialEq, RlpEncodable, RlpDecodable)]
 pub struct NodeRecord {
     pub address: Ip,
     pub tcp_port: u16,
     pub udp_port: u16,
     pub id: NodeId,
+}
+
+impl Display for NodeRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "enode://{:?}@{}:{}",
+            self.id, self.address.0, self.tcp_port
+        )
+    }
 }
 
 #[derive(Debug, Error)]
