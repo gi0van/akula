@@ -77,14 +77,71 @@ where
         mut block_num: u64,
         page_size: usize,
     ) -> RpcResult<TransactionsWithReceipts> {
-        let _ = addr;
-        let _ = block_num;
-        let _ = page_size;
+        let dbtx = self.db.begin()?;
+
+        let call_from_cursor = dbtx.cursor(tables::CallFromIndex)?;
+        let call_to_cursor = dbtx.cursor(tables::CallToIndex)?;
+
+        let chain_config = dbtx
+            .get(tables::Config, ())?
+            .ok_or_else(|| format_err!("chain spec not found"))?;
+
+        let first_page = if block_num == 0 {
+            true
+        } else {
+            // Internal search code considers blockNum [including], so adjust the value
+            block_num -= 1;
+
+            false
+        };
+
+        // Initialize search cursors at the first shard >= desired block number
+        let call_from_provider =
+            CallCursorBackwardBlockProvider::new(call_from_cursor, addr, block_num);
+        let call_to_provider =
+            CallCursorBackwardBlockProvider::new(call_to_cursor, addr, block_num);
+        let call_from_to_provider =
+            CallFromToBlockProvider::new(false, call_from_provider, call_to_provider);
+
+        let mut txs = Vec::with_capacity(page_size);
+        let mut receipts = Vec::with_capacity(page_size);
+
+        let mut result_count = 0;
+        let mut has_more = true;
+        loop {
+            if result_count >= page_size || !has_more {
+                break;
+            }
+
+            let mut results;
+            (results, has_more) = self.trace_blocks(
+                addr,
+                chain_config,
+                page_size,
+                result_count,
+                call_from_to_provider,
+            )?;
+
+            for r in results {
+                result_count += r.txs.len();
+                for tx in r.txs.into_iter().rev() {
+                    txs.push(tx)
+                }
+                for receipt in r.receipts.into_iter().rev() {
+                    receipts.push(receipt);
+                }
+
+                if result_count >= page_size {
+                    break;
+                }
+            }
+        }
+
         Ok(TransactionsWithReceipts {
-            txs: vec![],
-            receipts: vec![],
-            first_page: true,
-            last_page: true,
+            txs,
+            receipts,
+            first_page,
+            last_page: !has_more,
         })
     }
     async fn search_transactions_after(
