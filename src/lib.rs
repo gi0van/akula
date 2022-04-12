@@ -2,6 +2,7 @@
     bool_to_option,
     const_for,
     const_mut_refs,
+    entry_insert,
     generator_trait,
     generators,
     let_else,

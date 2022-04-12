@@ -3,6 +3,8 @@ pub mod tables;
 pub mod traits;
 
 use self::traits::*;
+pub use self::traits::{DupSort, TableEncode, TableDecode, Table};
+
 use crate::kv::{mdbx::*, tables::CHAINDATA_TABLES};
 use byte_unit::*;
 use bytes::Bytes;
